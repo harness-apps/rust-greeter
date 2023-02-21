@@ -1,0 +1,101 @@
+# https://taskfile.dev
+
+version: "3"
+
+dotenv:
+  - .env
+
+vars:
+  BUILDER: buildx-multi-arch
+  LIMA_INSTANCE: rust-dev-env-alpine
+  BUILDER_IMAGE: kameshsampath/rust-builder
+
+tasks:
+  build_env:
+    aliases:
+      - dev_env
+    desc: start lima-vm to run rust commands
+    silent: true
+    cmds:
+      - limactl start --name={{.LIMA_INSTANCE}} --tty=false {{.LIMA_INSTANCE}}.yaml
+
+  dev_shell:
+    aliases:
+      - shell
+    silent: true
+    desc: shell into the lima vm
+    cmds:
+      - limactl shell {{.LIMA_INSTANCE}} bash
+
+  delete_build_env:
+    desc: stop and delete lima-vm {{.LIMA_INSTANCE}}
+    silent: true
+    cmds:
+      - limactl delete --force {{.LIMA_INSTANCE}}
+ 
+  prepare-buildx:
+    desc: prepare the docker buildx environment
+    cmds:
+      - docker buildx inspect "{{.BUILDER}}" || docker buildx create --name="{{.BUILDER}}" --driver=docker-container --driver-opt=network=host
+    silent: true
+  
+  clean:
+    desc: cleans the target directory/$CARGO_TARGET_DIR
+    cmds:
+      - cargo $CARGO_TARGET_DIR
+    silent: true
+  
+  build:
+    desc: builds the application for host platform
+    cmds:
+      - cargo build
+    silent: true
+  
+  unit_test:
+    desc: runs the unit tests
+    aliases:
+      - ut
+    cmds:
+      - cargo test --lib
+    silent: true
+  
+  integration_test:
+    desc: runs only integration tests
+    aliases:
+      - it
+    env:
+      SERVICE_URL: http://localhost:8080
+    preconditions:
+      - sh: 'curl $SERVICE_URL'
+        msg: "Please start the application using cargo run `PORT=8080 cargo run"
+    cmds:
+      - cargo test --test='*'
+    silent: true
+  
+  test:
+    desc: runs unit and integration tests
+    cmds:
+      - task: ut
+      - task: it
+    silent: true
+
+  load-image:
+    desc: build and load the image to local docker daemon for verification and testing
+    silent: true
+    deps:
+      - prepare-buildx
+    cmds:
+      - docker buildx build --builder="{{.BUILDER}}" -t "{{.PLUGIN_REPO}}" --platform=linux/arm64 --load -f Dockerfile .
+  ci:
+    desc: runs the drone ci build to do cross platform builds and push the image to container registry
+    silent: true
+    cmds:
+      - drone exec --trusted --env-file=.env
+
+  cross:
+    desc: Cross compile binaries to linux/arm64 and linux/amd64
+    silent: true
+    cmds:
+      - cargo clean
+      - cargo zigbuild --profile=release --target aarch64-unknown-linux-musl
+      - cargo zigbuild --profile=release --target x86_64-unknown-linux-musl

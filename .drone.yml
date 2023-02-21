@@ -1,0 +1,58 @@
+kind: pipeline
+type: docker
+name: default
+
+services:
+  - name: rgreeter
+    image: docker.io/kameshsampath/rust-zig-builder:v0.1.0
+    user: root
+    environment:
+      PORT: 8080
+      RUST_LOG: info
+    commands:
+      - cargo run --target-dir=/tmp/build
+    volumes:
+      - name: cargo-cache
+        path: /usr/local/cargo/registry
+
+steps:
+  - name: wait for the service rgreeter to be up
+    image: alpine
+    commands:
+      - apk add -U --no-cache curl
+      - until curl --output /dev/null --silent --head --fail http://rgreeter:8080 ; do sleep 5; done;
+
+  - name: test
+    image: docker.io/kameshsampath/rust-zig-builder:v0.1.0
+    pull: if-not-exists
+    user: root
+    environment:
+      SERVICE_URL: "http://rgreeter:8080"
+    commands:
+      - cargo test --target-dir=/tmp/build
+    volumes:
+      - name: cargo-cache
+        path: /usr/local/cargo/registry
+
+  - name: build
+    image: docker.io/kameshsampath/rust-zig-builder:v0.1.0
+    pull: if-not-exists
+    user: root
+    commands:
+      - task cross
+    volumes:
+      - name: cargo-cache
+        path: /usr/local/cargo/registry
+  
+  - name: push
+    image: thegeeklab/drone-docker-buildx:23
+    privileged: true
+    settings:
+      context: target
+      tags: latest
+      labels:
+       - org.opencontainers.image.source: https://github.com/kameshsampath/rgreeter
+
+volumes:
+  - name: cargo-cache
+    temp: {}
